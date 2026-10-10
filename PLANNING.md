@@ -176,4 +176,20 @@ MCP Token（外部依赖，需本人手机号申请）
 | # | 事项 | 说明 | 状态 |
 |:--:|---|---|:--:|
 | 1 | 申请麦当劳 MCP Token | https://open.mcd.cn/mcp → 登录（手机号）→ 控制台 → 激活 → 同意协议 → 复制 | ✅ 已完成（10-09） |
-| 2 | 提供 GitHub PAT | 需 `repo` 权限，用于建仓库与发 Issue；用后建议 revoke | ⏳ 待提供 |
+| 2 | 提供 GitHub PAT | classic token + `public_repo`（fine-grained 不支持向非成员公开仓库贡献，无法发报名 Issue） | ✅ 已完成（10-10） |
+
+---
+
+## 八、报名进度（2026-10-10）
+
+| 项 | 状态 |
+|---|---|
+| GitHub 账号 | `liuqingping01` |
+| 仓库 | https://github.com/liuqingping01/mcd-order-lab （Public，21 个文件） |
+| 必需文件核验 | README.md / CONTEST_DECLARATION.md / MCP_INTEGRATION.md / mcp-config.example.json / workbuddy.md —— 5/5 齐备 |
+| 敏感文件扫描 | `.env`、`examples/*.real.json` 均未入库 ✅ |
+| 报名 Issue | https://github.com/M-China/mcd-developer-innovation-challenge/issues/200 |
+| 官方核验回复 | ⏳ 等待中（官方称报名成功会在 Issue 下自动回复） |
+
+**注意**：`git push` 在受限环境中会被中断，改用 GitHub Git Data API
+（blobs → tree → commit → update-ref）完成推送，产生单个规范 commit。

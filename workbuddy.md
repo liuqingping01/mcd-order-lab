@@ -101,4 +101,6 @@ node --check  → 6 个 JS 文件全部通过
 |---|---|
 | 项目骨架、文档、算法、界面 | ✅ 已完成 |
 | MCP 真实调用验证与适配层校准 | ✅ **已完成**（2026-10-09，真实 Token，全链路跑通） |
-| GitHub 仓库创建与报名 Issue | ⏳ 未开始 —— 等待用户提供 PAT |
+| GitHub 仓库创建与代码推送 | ✅ **已完成**（2026-10-10，Public 仓库，21 个文件） |
+| 报名 Issue 提交 | ✅ **已提交** [#200](https://github.com/M-China/mcd-developer-innovation-challenge/issues/200) |
+| 官方报名核验回复 | ⏳ 等待自动回复 |

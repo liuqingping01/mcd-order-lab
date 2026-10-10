@@ -55,7 +55,7 @@
 ### 2. 配置
 
 ```bash
-git clone https://github.com/<你的账号>/mcd-order-lab.git
+git clone https://github.com/liuqingping01/mcd-order-lab.git
 cd mcd-order-lab
 cp .env.example .env
 # 编辑 .env，填入 MCD_MCP_TOKEN=<你的 Token>

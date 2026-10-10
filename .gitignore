@@ -1,0 +1,18 @@
+# 真实凭据 —— 绝不允许提交
+.env
+.env.*
+!.env.example
+*.token
+mcp-config.json
+
+# 依赖与产物
+node_modules/
+dist/
+*.log
+
+# 真实调用响应（可能含地址、订单等个人信息）
+examples/*.real.json
+
+# 系统
+.DS_Store
+Thumbs.db

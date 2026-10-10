@@ -1,0 +1,23 @@
+{
+  "name": "mcd-order-lab",
+  "version": "1.0.0",
+  "description": "麦麦点单决策台 —— 基于麦当劳 MCP 实时数据的多目标点单决策工具",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "probe": "node scripts/probe.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcdonald",
+    "mcp",
+    "model-context-protocol",
+    "workbuddy"
+  ],
+  "license": "MIT",
+  "private": false,
+  "dependencies": {}
+}

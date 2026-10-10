@@ -21,6 +21,9 @@ import {
   parseNutritionTable, extractPrice, asArray,
 } from './adapter.js';
 import { plan, buildNutritionIndex } from './planner.js';
+import {
+  matchTargets, pickTarget, isComboEntry, analyzeCombo, recommend, nutritionSummary,
+} from './deal.js';
 
 loadEnv();
 
@@ -94,6 +97,21 @@ async function step(name, fn) {
   } catch (err) {
     return { ok: false, name, error: err.message ?? String(err) };
   }
+}
+
+/** 有限并发：套餐扫描要打 50+ 次 MCP，串行太慢，无限并发会撞限流（600 次/分钟）。 */
+async function mapLimit(list, limit, fn) {
+  const out = new Array(list.length);
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, list.length) }, async () => {
+    while (i < list.length) {
+      const idx = i;
+      i += 1;
+      out[idx] = await fn(list[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return out;
 }
 
 /**
@@ -232,6 +250,157 @@ async function buildPlan(client, body) {
   };
 }
 
+/**
+ * 主线链路：我想吃 X —— 买套餐还是单点更划算？
+ *
+ * 价格口径：**全部取自官方 calculate-price**。实测菜单展示价与官方算价在部分商品上
+ * 不一致（如板烧鸡腿堡四件套 菜单 ¥28 / 官方算价 ¥57），菜单价仅用于判断"能否单点"。
+ *
+ * 套餐内无法单点的商品（套餐专属）不计入金额，只作知情展示，
+ * 因此净收益是保守下界，实际只会更划算。
+ */
+async function buildDeal(client, body) {
+  const warnings = [];
+  const { city, keyword, want, storeCode: fixedStoreCode } = body ?? {};
+  if (!want) return { ok: false, error: '缺少 want（你想吃什么）' };
+
+  // 1) 门店
+  let store = null;
+  const storeRes = await step('query-nearby-stores', () =>
+    client.callToolJson('query-nearby-stores', { beType: 1, city, keyword, searchType: 2 })
+  );
+  const stores = storeRes.ok ? normalizeStores(storeRes.data?.data) : [];
+  if (!storeRes.ok) warnings.push(`门店查询失败：${storeRes.error}`);
+  store = fixedStoreCode
+    ? stores.find((s) => s.code === String(fixedStoreCode)) ?? stores[0] ?? null
+    : stores[0] ?? null;
+  if (!store) return { ok: false, error: '未查询到门店', warnings };
+  const storeCode = store.code;
+
+  // 2) 菜单
+  const mealsRes = await step('query-meals', () =>
+    client.callToolJson('query-meals', { storeCode, beType: 1, orderType: 1 })
+  );
+  if (!mealsRes.ok || mealsRes.data?.success === false) {
+    return { ok: false, error: `菜单查询失败：${mealsRes.error ?? mealsRes.data?.message}`, warnings };
+  }
+  const menu = normalizeMenu(mealsRes.data?.data);
+  const menuDict = new Map(menu.map((x) => [x.code, x]));
+
+  // 3) 目标商品：必须是**单品**。套餐是购买路径，不能当"想吃的东西"。
+  const candidates = matchTargets(menu, want);
+  const target = pickTarget(candidates);
+  if (!target) {
+    return {
+      ok: false,
+      error: candidates.length
+        ? `菜单里只找到名为「${want}」的套餐，没找到同名单品。请换一个单品名试试（如「麦辣鸡腿汉堡」「板烧鸡腿堡」）`
+        : `菜单里没找到「${want}」`,
+      candidates: candidates.slice(0, 8).map((m) => ({ name: m.name, code: m.code, isCombo: m.isCombo })),
+      suggestions: menu.filter((m) => !isComboEntry(m)).slice(0, 10).map((m) => m.name),
+    };
+  }
+
+  const priceOf = async (items) => {
+    const r = await client.callToolJson('calculate-price', { storeCode, beType: 1, orderType: 1, items });
+    return extractPrice(r?.data)?.pay ?? 0;
+  };
+
+  // 4) 官方算价：单点该商品
+  const targetPrice = await step('calculate-price(单点)', () =>
+    priceOf([{ productCode: target.code, quantity: 1 }])
+  );
+  if (!targetPrice.ok || !targetPrice.data) {
+    return { ok: false, error: `单品算价失败：${targetPrice.error}`, warnings };
+  }
+
+  // 5) 扫描包含该商品的套餐
+  //    ⚠️ 套餐判定走 isComboEntry（名称特征为主），不能只信 tags：
+  //       「麦辣鸡腿堡四件套」tags 是 ["麦金卡"]，只按 tags 会整系列漏掉。
+  const combos = menu.filter(isComboEntry);
+  const scanned = await mapLimit(combos, 5, async (combo) => {
+    const d = await step('query-meal-detail', () =>
+      client.callToolJson('query-meal-detail', { storeCode, beType: 1, orderType: 1, code: combo.code })
+    );
+    const rounds = d.ok ? d.data?.data?.rounds ?? [] : [];
+    const hasTarget = rounds.some((r) =>
+      (r.choices ?? []).some((ch) => String(ch.code) === String(target.code))
+    );
+    if (!hasTarget) return null;
+
+    const comboPrice = await step('calculate-price(套餐)', () =>
+      priceOf([{ productCode: combo.code, quantity: 1 }])
+    );
+    if (!comboPrice.ok || !comboPrice.data) return null;
+
+    // 先用菜单价分类出可单点项，再对其整体用官方算价
+    const pre = analyzeCombo({
+      target, combo, rounds, menuDict,
+      comboPrice: comboPrice.data, targetPrice: targetPrice.data,
+    });
+    if (!pre) return null;
+    let extrasValue = 0;
+    if (pre.extras.evaluable.length) {
+      const ev = await step('calculate-price(多得部分)', () =>
+        priceOf(pre.extras.evaluable.map((e) => ({ productCode: e.code, quantity: 1 })))
+      );
+      extrasValue = ev.ok ? ev.data : 0;
+    }
+    return analyzeCombo({
+      target, combo, rounds, menuDict,
+      comboPrice: comboPrice.data, targetPrice: targetPrice.data, extrasValue,
+    });
+  });
+  const results = scanned.filter(Boolean);
+
+  const { best, bestValue, paths } = recommend(results);
+
+  // 6) 附属信息：可领券 + 今日活动（官方 App 已有，这里只是搬到决策现场）
+  const couponsRes = await step('available-coupons', () => client.callToolJson('available-coupons', {}));
+  const coupons = couponsRes.ok
+    ? asArray(couponsRes.data?.data).map((c) => ({
+        name: c.couponName ?? '',
+        image: c.couponImage ?? '',
+        status: c.couponStatus ?? '',
+        label: c.label ?? '',
+      }))
+    : [];
+
+  const calRes = await step('campaign-calendar', () => client.callToolJson('campaign-calendar', {}));
+  const today = calRes.ok
+    ? (asArray(calRes.data?.data?.dailyList).slice(-1)[0]?.events ?? []).map((e) => ({
+        title: e?.articleDto?.title ?? e?.activityTitle ?? '',
+        highlight: e?.articleDto?.highlights ?? '',
+        price: e?.price ?? '',
+      })).filter((e) => e.title)
+    : [];
+
+  // 7) 营养：仅作附加展示，不参与决策
+  const nutRes = await step('list-nutrition-foods', () => client.callToolJson('list-nutrition-foods', {}));
+  const nutrition = nutRes.ok ? parseNutritionTable(nutRes.data?.data).map(normalizeNutrition) : [];
+  const lookupNutrition = buildNutritionIndex(nutrition);
+  const cartForNutrition = [];
+  if (best) {
+    cartForNutrition.push({ name: best.target.name, quantity: 1 });
+    for (const e of best.extras.evaluable) cartForNutrition.push({ name: e.name, quantity: 1 });
+    for (const e of best.extras.exclusive) cartForNutrition.push({ name: e.name, quantity: 1 });
+  }
+
+  return {
+    ok: true,
+    store,
+    target: { code: target.code, name: target.name },
+    singlePrice: targetPrice.data,
+    combosScanned: combos.length,
+    best,
+    bestValue,   // 净收益绝对值最高的方案（可能是大份/多人餐），作为「加价升级」备选
+    paths,
+    supplements: { coupons, campaigns: today },
+    nutrition: nutritionSummary(cartForNutrition, lookupNutrition),
+    warnings,
+  };
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const { pathname } = url;
@@ -273,6 +442,26 @@ const server = createServer(async (req, res) => {
       await client.initialize();
       const result = await buildPlan(client, body);
       return json(res, 200, { ok: true, ...result });
+    } catch (err) {
+      return json(res, 502, { ok: false, error: err.message });
+    }
+  }
+
+  // 主线：我想吃 X，买套餐还是单点更划算
+  if (pathname === '/api/deal' && req.method === 'POST') {
+    let body;
+    try {
+      body = await readBody(req);
+    } catch (err) {
+      return json(res, 400, { ok: false, error: err.message });
+    }
+    if (!process.env.MCD_MCP_TOKEN) {
+      return json(res, 400, { ok: false, error: '未配置 MCD_MCP_TOKEN' });
+    }
+    try {
+      const client = new McdMcpClient({ token: process.env.MCD_MCP_TOKEN });
+      await client.initialize();
+      return json(res, 200, await buildDeal(client, body));
     } catch (err) {
       return json(res, 502, { ok: false, error: err.message });
     }

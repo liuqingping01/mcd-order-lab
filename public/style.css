@@ -277,3 +277,154 @@ code {
   font-size: 11.5px; color: var(--text-dim);
 }
 .footer-dim { color: #9aa1ab; }
+
+/* ==========================================================
+   主线视图：怎么买划算
+   ========================================================== */
+.layout-deal {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 28px 24px;
+  display: flex; flex-direction: column; gap: 20px;
+}
+
+/* ---------- 提问卡 ---------- */
+.askcard {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 22px;
+  box-shadow: var(--shadow);
+}
+.ask-label {
+  display: block;
+  font-size: 13px; font-weight: 600; color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.ask-input {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 18px; font-weight: 600;
+  font-family: inherit;
+  color: var(--text);
+}
+.ask-input:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.ask-row { margin: 14px 0; }
+.ask-row .field-label { display: block; margin-bottom: 6px; }
+.ask-hint { margin: 10px 0 0; font-size: 11.5px; color: #9aa1ab; }
+
+/* ---------- 结论卡 ---------- */
+.verdict-card {
+  background: var(--surface);
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  padding: 24px;
+  box-shadow: var(--shadow);
+}
+.verdict-card.win { border-color: var(--ok); }
+.verdict-card.lose { border-color: var(--gold); }
+.verdict-card.none { border-color: var(--line); }
+.verdict-card h2 { margin: 0 0 4px; font-size: 20px; font-weight: 800; }
+.verdict-sub { margin: 6px 0 0; font-size: 13px; color: var(--text-dim); }
+
+.verdict-tag {
+  display: inline-block;
+  padding: 4px 12px; border-radius: 999px;
+  font-size: 12px; font-weight: 700;
+  background: var(--accent-soft); color: var(--accent);
+  margin-bottom: 10px;
+}
+.verdict-card.win .verdict-tag { background: #eaf6ef; color: var(--ok); }
+.verdict-card.lose .verdict-tag { background: var(--warn-bg); color: var(--warn-text); }
+
+.verdict-money {
+  font-size: 34px; font-weight: 800; color: var(--accent); line-height: 1.1;
+  margin: 6px 0;
+}
+.verdict-gain {
+  font-size: 13px; color: var(--text-dim);
+  padding-bottom: 16px; border-bottom: 1px solid var(--line);
+}
+
+/* ---------- 对比 ---------- */
+.compare { padding: 14px 0 0; }
+.compare-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; font-size: 13px;
+}
+.compare-label {
+  width: 52px; flex: none;
+  font-size: 11px; font-weight: 700; color: var(--text-dim);
+  background: var(--bg); border-radius: 6px;
+  padding: 3px 0; text-align: center;
+}
+.compare-name { flex: 1; font-weight: 600; }
+.compare-price { font-weight: 700; }
+
+/* ---------- 多得清单 ---------- */
+.extras { margin-top: 16px; }
+.extras-title { font-size: 12px; font-weight: 700; color: var(--text-dim); margin-bottom: 8px; }
+.extra-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 13px;
+}
+.extra-row:last-of-type { border-bottom: none; }
+.extra-name { font-weight: 600; }
+.extra-tag {
+  font-size: 11px; padding: 2px 8px; border-radius: 6px; white-space: nowrap;
+}
+.extra-tag.ok { background: #eaf6ef; color: var(--ok); }
+.extra-tag.dim { background: var(--bg); color: var(--text-dim); }
+.extras-note {
+  margin-top: 10px; font-size: 11.5px; color: var(--warn-text);
+  background: var(--warn-bg); border-radius: 8px; padding: 8px 10px;
+}
+/* 价格口径冲突（菜单展示价 vs 官方算价）——比一般提示更醒目 */
+.extras-note.warn {
+  color: #8a5a00; background: #fff6e0; border: 1px solid #f2d79b;
+}
+
+/* ---------- 其他套餐 ---------- */
+.others {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px; padding: 14px 16px;
+}
+.others-title { font-size: 12px; font-weight: 700; color: var(--text-dim); margin-bottom: 8px; }
+.other-row {
+  display: flex; justify-content: space-between; font-size: 13px; padding: 5px 0;
+}
+.other-net { color: var(--text-dim); }
+
+/* ---------- 加价升级备选 ---------- */
+.upgrade {
+  background: var(--surface); border: 1px dashed var(--line);
+  border-radius: 12px; padding: 14px 16px;
+}
+
+/* ---------- 营养（附加，弱化） ---------- */
+.nutrition {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg); border-radius: 10px;
+  font-size: 12px; color: var(--text-dim);
+}
+.nut-label { font-weight: 700; }
+.nut-cov { font-size: 11px; color: #9aa1ab; }
+
+/* ---------- 附属信息 ---------- */
+.supplements { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 700px) { .supplements { grid-template-columns: 1fr; } }
+.sup-box {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px; padding: 14px 16px;
+}
+.sup-title { font-size: 12px; font-weight: 700; color: var(--text-dim); margin-bottom: 8px; }
+.sup-list { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--text); }
+.sup-list li { margin-bottom: 3px; }
+
+.btn-order { margin-top: 4px; }

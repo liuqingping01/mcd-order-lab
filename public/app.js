@@ -397,7 +397,8 @@ function renderCoupons(coupons) {
     grid.append(card);
   }
   els.sheetBody.append(grid);
-  els.sheetBody.append(el('p', 'ask-hint', '券的实际抵扣以官方算价为准，下单时会自动带入。'));
+  els.sheetBody.append(el('p', 'ask-hint',
+    '⚠️ 官方算价接口不支持传入券，本页所有价格均不含券后优惠。领到的券请在麦当劳 App 下单时使用。'));
 }
 
 function renderCampaigns(days) {
@@ -682,7 +683,7 @@ function buildCheckout(r, options) {
       updateCheckoutAmount(cur ? cur.combo.price : r.singlePrice);
     });
     opt.append(cb);
-    opt.append(document.createTextNode(`同时领取 ${nCoupon} 张可用优惠券`));
+    opt.append(document.createTextNode(`同时领取 ${nCoupon} 张可用优惠券（不影响本页价格，请在官方 App 用券）`));
     box.append(opt);
   }
 

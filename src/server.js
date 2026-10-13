@@ -9,6 +9,7 @@
  */
 
 import { createServer } from 'node:http';
+import { networkInterfaces } from 'node:os';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +33,13 @@ loadEnv();
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = resolve(here, '..', 'public');
 const PORT = Number(process.env.PORT ?? 5173);
+/**
+ * 监听地址：默认只绑 127.0.0.1（Token 与订单不出本机）。
+ * 需要在手机上访问时设 HOST=0.0.0.0，服务会打印局域网地址供手机打开。
+ * 注意：设为 0.0.0.0 后同一局域网内的任何人都能访问，请只在可信网络下开启。
+ */
+const HOST = process.env.HOST ?? '127.0.0.1';
+const LAN_MODE = HOST === '0.0.0.0';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -790,10 +798,30 @@ const server = createServer(async (req, res) => {
   return serveStatic(req, res, pathname);
 });
 
-// 只监听本地回环：Token 与订单数据不出本机，也不对局域网暴露。
-server.listen(PORT, '127.0.0.1', () => {
+/** 列出局域网 IPv4 地址，方便手机直接打开 */
+function lanAddresses() {
+  const out = [];
+  for (const list of Object.values(networkInterfaces())) {
+    for (const ni of list ?? []) {
+      if (ni.family === 'IPv4' && !ni.internal) out.push(ni.address);
+    }
+  }
+  return out;
+}
+
+server.listen(PORT, HOST, () => {
   const configured = Boolean(process.env.MCD_MCP_TOKEN);
   console.log(`麦麦点单决策台已启动： http://localhost:${PORT}`);
+  if (LAN_MODE) {
+    const addrs = lanAddresses();
+    console.log('局域网访问（手机与电脑连同一 WiFi 时可直接打开）：');
+    if (addrs.length) {
+      for (const a of addrs) console.log(`  http://${a}:${PORT}`);
+    } else {
+      console.log('  未探测到局域网地址，请确认网络已连接');
+    }
+    console.log('⚠️  当前对局域网开放：同一网络下的其他人也能访问本服务，请勿在公共网络使用。');
+  }
   console.log(`MCP Token：${configured ? '已配置' : '未配置（请复制 .env.example 为 .env 并填入 Token）'}`);
   if (!configured) {
     console.log('未配置 Token 时 /api/plan 会返回错误提示，但页面仍可打开查看界面。');

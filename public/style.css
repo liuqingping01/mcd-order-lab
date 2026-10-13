@@ -61,7 +61,6 @@ body {
   border-radius: 999px; background: var(--accent); color: #fff;
   font-size: 10.5px; font-weight: 700; line-height: 17px; text-align: center;
 }
-@media (max-width: 620px) { .icon-label { display: none; } }
 
 .status {
   display: flex; align-items: center; gap: 8px;
@@ -437,3 +436,80 @@ input[type="text"]:focus {
   font-size: 11.5px; color: var(--text-dim);
 }
 .footer-dim { color: #9aa1ab; }
+
+/* ==========================================================
+   移动端适配（断点 640px）
+   目标：手机浏览器里「点得中、看得清、单手可用」。
+   桌面布局靠 max-width 居中，这里只做小屏重构，不动算法与结构。
+   ========================================================== */
+@media (max-width: 640px) {
+  /* --- 顶栏：压缩高度，让位给内容 --- */
+  .topbar-inner { padding: 10px 14px; gap: 10px; }
+  .brand { gap: 9px; }
+  .brand-mark { width: 34px; height: 34px; font-size: 19px; border-radius: 10px; }
+  .topbar h1 { font-size: 15px; }
+  .brand-sub { display: none; }
+  .status { padding: 4px 9px; font-size: 11px; }
+  .icon-label { display: none; }
+
+  /* --- 触控目标：视觉尺寸 + 热区扩展 --- */
+  /* 右上角图标按钮：min-height 40，热区再外扩到 48 */
+  .icon-btn { position: relative; min-height: 40px; padding: 9px 13px; font-size: 13px; }
+  .icon-btn::after { content: ''; position: absolute; inset: -4px; border-radius: 999px; }
+
+  /* 加购「+」：视觉 34，热区 46（原本 24 在手机上几乎点不中） */
+  .item-add { width: 34px; height: 34px; font-size: 19px; top: 5px; right: 5px; }
+  .item-add::after { content: ''; position: absolute; inset: -6px; border-radius: 50%; }
+
+  /* 购物车 +/- 步进：视觉 32，热区 46 */
+  .step-btn { position: relative; width: 32px; height: 32px; font-size: 16px; }
+  .step-btn::after { content: ''; position: absolute; inset: -7px; border-radius: 8px; }
+
+  .hero-chip { padding: 8px 14px; font-size: 13px; }
+  .btn-go { padding: 12px 18px; min-height: 44px; }
+  .btn-primary { padding: 13px; min-height: 46px; }
+  .btn-ghost { padding: 11px; min-height: 44px; }
+  .sheet-close { font-size: 24px; padding: 6px 8px; margin: -6px -8px; }
+
+  /* --- 输入框 ≥16px：否则 iOS Safari 聚焦时会强制放大整页 --- */
+  .hero-row input { font-size: 16px; padding: 12px; }
+  input[type="text"] { font-size: 16px; padding: 10px 11px; }
+
+  /* --- 间距：桌面 24px 侧边距在手机上太浪费 --- */
+  main { padding: 14px 12px; gap: 14px; }
+  .footer { padding: 16px 14px calc(16px + env(safe-area-inset-bottom)); }
+  .askhero { padding: 16px 14px; }
+  .hero-title { font-size: 19px; }
+  .panel-inner { padding: 14px; }
+  .opt-detail { padding: 14px; }
+  .checkout { padding: 14px; }
+  .empty { padding: 32px 16px; }
+
+  /* --- 门店输入：窄屏下自动均分，不再固定 130px --- */
+  .hero-loc { gap: 6px; }
+  .loc-input { width: auto; flex: 1 1 96px; min-width: 0; }
+  .loc-store { margin-left: 0; flex: 1 1 100%; font-size: 11.5px; }
+
+  /* --- 横向滚动的方案卡：加吸附，滑动更跟手 --- */
+  .opt-row, .cart-opt-row { scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; }
+  .opt-card, .cart-opt { scroll-snap-align: start; }
+  .opt-card { flex: 0 0 142px; }
+  .cart-opt { flex: 0 0 112px; }
+
+  /* --- 抽屉：桌面右侧滑出 → 手机底部弹出（单手可及） --- */
+  .sheet { align-items: flex-end; }
+  .sheet-panel {
+    width: 100%; max-width: none; height: auto; max-height: 86vh;
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -8px 32px rgba(16, 24, 40, .18);
+    animation: sheet-up .22s ease;
+  }
+  @keyframes sheet-up { from { transform: translateY(100%); } to { transform: none; } }
+  .sheet-body { padding: 14px 14px calc(24px + env(safe-area-inset-bottom)); }
+  .sheet-head { padding: 12px 14px; }
+
+  /* --- 去掉移动端点击时的灰色高亮块 --- */
+  .item-card, .icon-btn, .item-add, .step-btn, .hero-chip, .opt-card, .cart-opt {
+    -webkit-tap-highlight-color: transparent;
+  }
+}

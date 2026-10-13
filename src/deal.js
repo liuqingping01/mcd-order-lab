@@ -182,6 +182,7 @@ export function analyzeCombo(input) {
         code: p.code,
         name: p.name || menuItem.name,
         price: menuItem.price,
+        image: menuItem.image ?? '',   // 官方商品图（来自 query-meals，128/128 都有）
         orderable: true,
       });
       menuValue += Number(menuItem.price ?? 0);
@@ -211,8 +212,19 @@ export function analyzeCombo(input) {
     : '';
 
   return {
-    combo: { code: String(combo.code), name: combo.name, price: comboPrice, menuPrice },
-    target: { code: String(target.code), name: target.name, price: targetPrice },
+    combo: {
+      code: String(combo.code),
+      name: combo.name,
+      price: comboPrice,
+      menuPrice,
+      image: combo.image ?? '',           // 官方商品图
+    },
+    target: {
+      code: String(target.code),
+      name: target.name,
+      price: targetPrice,
+      image: target.image ?? '',
+    },
     containsTarget: matchedTarget,
     delta,                       // 买套餐相对单买多花的钱
     extras: {

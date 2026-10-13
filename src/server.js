@@ -21,6 +21,8 @@ import {
   parseNutritionTable, extractPrice, asArray,
 } from './adapter.js';
 import { plan, buildNutritionIndex } from './planner.js';
+import { CATEGORY_GROUPS, groupOf } from './catalog.js';
+import { matchCartWithCombo, rankOptions } from './cart.js';
 import {
   matchTargets, pickTarget, isComboEntry, analyzeCombo, recommend, nutritionSummary,
 } from './deal.js';
@@ -389,7 +391,7 @@ async function buildDeal(client, body) {
   return {
     ok: true,
     store,
-    target: { code: target.code, name: target.name },
+    target: { code: target.code, name: target.name, image: target.image ?? '' },
     singlePrice: targetPrice.data,
     combosScanned: combos.length,
     best,
@@ -397,6 +399,263 @@ async function buildDeal(client, body) {
     paths,
     supplements: { coupons, campaigns: today },
     nutrition: nutritionSummary(cartForNutrition, lookupNutrition),
+    warnings,
+  };
+}
+
+/**
+ * 探索链路：按用户"出发点"取数据，支撑首页的多个入口。
+ *
+ *   mode=groups      → 大类清单（每个类有多少商品）
+ *   mode=category    → 某个大类下的全部商品，单品在前、套餐在后
+ *   mode=deals       → 省钱榜（有折扣的，按省得多寡排序）+ 低价榜（最便宜的单品）
+ *   mode=campaigns   → 活动日历（按天）+ 可领券
+ *
+ * 价格说明：本接口展示**菜单价**（不给每个商品都调一次官方算价，那会打爆限流）；
+ * 用户点进具体商品后走 /api/deal，那里全部用官方算价。
+ */
+async function buildExplore(client, body) {
+  const warnings = [];
+  const { city, keyword, mode = 'groups', category } = body ?? {};
+
+  const storeRes = await step('query-nearby-stores', () =>
+    client.callToolJson('query-nearby-stores', { beType: 1, city, keyword, searchType: 2 })
+  );
+  // ⚠️ 层级：step() 把结果包成 {ok, data} 后，data 才是 callToolJson 返回的信封，
+  //    再往下一层 .data 才是业务 payload。
+  const stores = storeRes.ok ? normalizeStores(storeRes.data?.data) : [];
+  if (!storeRes.ok) warnings.push(`门店查询失败：${storeRes.error}`);
+  const store = stores[0] ?? null;
+  if (!store) return { ok: false, error: '未查询到门店', warnings };
+  const storeCode = store.code;
+
+  const mealsRes = await step('query-meals', () =>
+    client.callToolJson('query-meals', { storeCode, beType: 1, orderType: 1 })
+  );
+  if (!mealsRes.ok || mealsRes.data?.success === false) {
+    return { ok: false, error: `菜单查询失败：${mealsRes.error ?? mealsRes.data?.message}`, warnings };
+  }
+  const menu = normalizeMenu(mealsRes.data?.data);
+
+  // image：官方商品图 CDN 直链，实测 128/128 商品都有、无防盗链，可直接 <img src> 引用
+  const shape = (m) => ({
+    code: m.code,
+    name: m.name,
+    price: m.price,
+    originalPrice: m.originalPrice,
+    save: Math.round((m.originalPrice - m.price) * 100) / 100,
+    tags: m.tags,
+    category: m.category,
+    isCombo: isComboEntry(m),
+    image: m.image ?? '',
+  });
+
+  // 大类清单
+  if (mode === 'groups') {
+    const groups = CATEGORY_GROUPS.map((g) => {
+      const items = menu.filter((m) => groupOf(m.category)?.key === g.key);
+      return {
+        key: g.key,
+        name: g.name,
+        count: items.length,
+        sample: items.slice(0, 3).map((m) => m.name),
+      };
+    }).filter((g) => g.count > 0);
+    const other = menu.filter((m) => !groupOf(m.category));
+    if (other.length) {
+      groups.push({
+        key: 'other', name: '其他', count: other.length,
+        sample: other.slice(0, 3).map((m) => m.name),
+      });
+    }
+    return { ok: true, mode, store, groups, warnings };
+  }
+
+  // 某个大类的商品：单品在前，套餐在后
+  if (mode === 'category') {
+    const g = CATEGORY_GROUPS.find((x) => x.key === category);
+    const items = category === 'other'
+      ? menu.filter((m) => !groupOf(m.category))
+      : menu.filter((m) => groupOf(m.category)?.key === category);
+    const singles = items.filter((m) => !isComboEntry(m)).sort((a, b) => a.price - b.price);
+    const combos = items.filter(isComboEntry).sort((a, b) => a.price - b.price);
+    return {
+      ok: true, mode, store,
+      groupName: g?.name ?? '其他',
+      items: [...singles, ...combos].map(shape),
+      warnings,
+    };
+  }
+
+  // 省钱榜 + 低价榜
+  if (mode === 'deals') {
+    const discounted = menu
+      .filter((m) => m.originalPrice > m.price && m.price > 0)
+      .sort((a, b) => (b.originalPrice - b.price) - (a.originalPrice - a.price))
+      .slice(0, 12)
+      .map(shape);
+
+    const cheapest = menu
+      .filter((m) => !isComboEntry(m) && m.price > 0)
+      .sort((a, b) => a.price - b.price)
+      .slice(0, 12)
+      .map(shape);
+
+    return { ok: true, mode, store, discounted, cheapest, warnings };
+  }
+
+  // 活动日历 + 可领券
+  if (mode === 'campaigns') {
+    const calRes = await step('campaign-calendar', () => client.callToolJson('campaign-calendar', {}));
+    const daily = asArray(calRes.ok ? calRes.data?.data?.dailyList : null);
+    const days = daily.map((d) => ({
+      date: d?.date ?? '',
+      dateText: d?.dateText ?? '',
+      events: asArray(d?.events).map((e) => ({
+        title: e?.articleDto?.title ?? e?.activityTitle ?? '',
+        highlight: e?.articleDto?.highlights ?? '',
+        content: e?.articleDto?.content ?? '',
+        price: e?.price ?? '',
+        priceSuffix: e?.priceSuffix ?? '',
+        image: e?.articleDto?.imgList?.[0] ?? '',
+        buttonText: e?.articleDto?.buttonText ?? e?.button?.text ?? '',
+      })).filter((e) => e.title || e.highlight),
+    })).filter((d) => d.events.length);
+    if (!calRes.ok) warnings.push(`活动日历查询失败：${calRes.error}`);
+
+    const couponRes = await step('available-coupons', () => client.callToolJson('available-coupons', {}));
+    const coupons = couponRes.ok
+      ? asArray(couponRes.data?.data).map((c) => ({
+          name: c.couponName ?? '', image: c.couponImage ?? '',
+          status: c.couponStatus ?? '', label: c.label ?? '',
+        }))
+      : [];
+
+    return { ok: true, mode, store, days, coupons, warnings };
+  }
+
+  return { ok: false, error: `未知的 mode：${mode}`, warnings };
+}
+
+/**
+ * 购物车 → 相似方案对比
+ *
+ * 用户往购物车加了几样单品后，这里回答：**全买单品划算，还是换成某个套餐更划算？**
+ *
+ * 做法：
+ *   1) 先对购物车原样求一次官方算价，作为基线
+ *   2) 扫描门店所有套餐，用套餐默认组成去"抵扣"购物车（见 src/cart.js）
+ *   3) 对有覆盖的套餐，按「套餐 ×1 + 未被覆盖的商品」重新官方算价
+ *   4) 与基线比差价，便宜的排在前面
+ *
+ * ⚠️ 套餐里多出来的东西（surplus，含无法单点的套餐专属品）视为"白送"，
+ *    不计入抵扣金额，因此省下的钱是**保守下界**。
+ */
+async function buildCart(client, body) {
+  const warnings = [];
+  const { items, city, keyword } = body ?? {};
+  const cart = (Array.isArray(items) ? items : [])
+    .map((i) => ({ code: String(i.code ?? '').trim(), quantity: Number(i.quantity) || 1 }))
+    .filter((i) => i.code && i.quantity > 0);
+
+  if (!cart.length) return { ok: false, error: '购物车是空的' };
+
+  // 1) 门店
+  const storeRes = await step('query-nearby-stores', () =>
+    client.callToolJson('query-nearby-stores', { beType: 1, city, keyword, searchType: 2 })
+  );
+  const stores = storeRes.ok ? normalizeStores(storeRes.data?.data) : [];
+  if (!storeRes.ok) warnings.push(`门店查询失败：${storeRes.error}`);
+  const store = stores[0] ?? null;
+  if (!store) return { ok: false, error: '未查询到门店', warnings };
+  const storeCode = store.code;
+
+  // 2) 菜单（用来补全名称、图片、以及判定套餐）
+  const mealsRes = await step('query-meals', () =>
+    client.callToolJson('query-meals', { storeCode, beType: 1, orderType: 1 })
+  );
+  if (!mealsRes.ok || mealsRes.data?.success === false) {
+    return { ok: false, error: `菜单查询失败：${mealsRes.error ?? mealsRes.data?.message}`, warnings };
+  }
+  const menu = normalizeMenu(mealsRes.data?.data);
+  const menuDict = new Map(menu.map((x) => [x.code, x]));
+
+  const priceOf = async (list) => {
+    const r = await client.callToolJson('calculate-price', {
+      storeCode, beType: 1, orderType: 1,
+      items: list.map((i) => ({ productCode: i.code, quantity: i.quantity })),
+    });
+    return extractPrice(r?.data)?.pay ?? 0;
+  };
+
+  // 3) 基线：购物车原样全买单品
+  const decorate = (list) => list.map((x) => {
+    const m = menuDict.get(String(x.code));
+    return {
+      code: String(x.code),
+      name: m?.name ?? x.name ?? `商品 ${x.code}`,
+      image: m?.image ?? '',
+      quantity: x.quantity,
+      orderable: Boolean(m),      // 不在菜单里 = 无法单点（套餐专属）
+    };
+  });
+
+  const baseRes = await step('calculate-price(购物车基线)', () => priceOf(cart));
+  if (!baseRes.ok || !baseRes.data) {
+    // 最常见的原因：购物车里有套餐专属品（官方算价返回空），提示要说得清
+    const bad = decorate(cart).filter((x) => !x.orderable);
+    return {
+      ok: false,
+      error: bad.length
+        ? `购物车里有 ${bad.length} 件无法单独下单的商品（${bad.map((x) => x.name).join('、')}），请移除后再试`
+        : `购物车算价失败：${baseRes.error ?? '未取到官方价格'}`,
+      warnings,
+    };
+  }
+  const baselinePrice = baseRes.data;
+
+  // 4) 扫描套餐，找能替代部分购物车的方案
+  const combos = menu.filter(isComboEntry);
+  const raw = await mapLimit(combos, 5, async (combo) => {
+    const d = await step('query-meal-detail', () =>
+      client.callToolJson('query-meal-detail', { storeCode, beType: 1, orderType: 1, code: combo.code })
+    );
+    const rounds = d.ok ? d.data?.data?.rounds ?? [] : [];
+    const parts = rounds.map((r) => {
+      const ch = (r?.choices ?? []).find((c) => c.isDefault === 1) ?? r?.choices?.[0];
+      return ch ? { code: String(ch.code ?? ''), name: ch.name ?? '', quantity: Number(ch.quantity) || 1 } : null;
+    }).filter(Boolean);
+
+    const m = matchCartWithCombo(parts, cart);
+    if (!m.coverCount) return null;
+
+    // 「套餐 ×1 + 未被覆盖的商品」整体官方算价
+    const bill = [{ code: combo.code, quantity: 1 }, ...m.uncovered];
+    const pr = await step('calculate-price(套餐方案)', () => priceOf(bill));
+    if (!pr.ok || !pr.data) return null;
+
+    return {
+      combo: { code: combo.code, name: combo.name, image: combo.image ?? '' },
+      covered: decorate(m.covered),
+      uncovered: decorate(m.uncovered),
+      surplus: decorate(m.surplus),
+      coverCount: m.coverCount,
+      total: pr.data,
+      diff: Math.round((pr.data - baselinePrice) * 100) / 100,   // 负数 = 比全单点省
+    };
+  });
+
+  const options = rankOptions(raw.filter(Boolean)).slice(0, 8);
+
+  return {
+    ok: true,
+    store,
+    cart: decorate(cart),
+    baseline: { price: baselinePrice, count: cart.reduce((s, x) => s + x.quantity, 0) },
+    options,
+    // 最省的方案：比基线便宜才算"更划算"
+    best: options.find((o) => o.diff < 0) ?? null,
+    combosScanned: combos.length,
     warnings,
   };
 }
@@ -462,6 +721,46 @@ const server = createServer(async (req, res) => {
       const client = new McdMcpClient({ token: process.env.MCD_MCP_TOKEN });
       await client.initialize();
       return json(res, 200, await buildDeal(client, body));
+    } catch (err) {
+      return json(res, 502, { ok: false, error: err.message });
+    }
+  }
+
+  // 探索：首页多个入口（分类浏览 / 省钱榜 / 活动）
+  if (pathname === '/api/explore' && req.method === 'POST') {
+    let body;
+    try {
+      body = await readBody(req);
+    } catch (err) {
+      return json(res, 400, { ok: false, error: err.message });
+    }
+    if (!process.env.MCD_MCP_TOKEN) {
+      return json(res, 400, { ok: false, error: '未配置 MCD_MCP_TOKEN' });
+    }
+    try {
+      const client = new McdMcpClient({ token: process.env.MCD_MCP_TOKEN });
+      await client.initialize();
+      return json(res, 200, await buildExplore(client, body));
+    } catch (err) {
+      return json(res, 502, { ok: false, error: err.message });
+    }
+  }
+
+  // 购物车：全买单品 vs 换成套餐，哪个更省
+  if (pathname === '/api/cart' && req.method === 'POST') {
+    let body;
+    try {
+      body = await readBody(req);
+    } catch (err) {
+      return json(res, 400, { ok: false, error: err.message });
+    }
+    if (!process.env.MCD_MCP_TOKEN) {
+      return json(res, 400, { ok: false, error: '未配置 MCD_MCP_TOKEN' });
+    }
+    try {
+      const client = new McdMcpClient({ token: process.env.MCD_MCP_TOKEN });
+      await client.initialize();
+      return json(res, 200, await buildCart(client, body));
     } catch (err) {
       return json(res, 502, { ok: false, error: err.message });
     }

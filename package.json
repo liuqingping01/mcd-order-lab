@@ -6,7 +6,10 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "probe": "node scripts/probe.js"
+    "test": "node --test \"test/*.test.js\"",
+    "test:live": "RUN_LIVE=1 node --test \"test/*.test.js\" \"test/live.smoke.js\"",
+    "probe": "node scripts/probe.js",
+    "inspect-combo": "node scripts/inspect-combo.js"
   },
   "engines": {
     "node": ">=18"

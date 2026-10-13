@@ -17,43 +17,69 @@
         <p class="brand-sub">买套餐还是单点？用麦当劳官方数据算给你看</p>
       </div>
     </div>
-    <div class="status" id="status">
-      <span class="dot" id="statusDot"></span>
-      <span id="statusText">正在检测 MCP 连接…</span>
+
+    <div class="topbar-actions">
+      <!-- 购物车 -->
+      <button class="icon-btn" id="btnCart" title="购物车">
+        <span class="icon-emoji">🛒</span>
+        <span class="icon-label">购物车</span>
+        <span class="icon-badge" id="cartBadge" hidden></span>
+      </button>
+      <!-- 优惠券 / 活动：右上角小图标，带数量徽章 -->
+      <button class="icon-btn" id="btnCoupons" title="优惠券">
+        <span class="icon-emoji">🎫</span>
+        <span class="icon-label">优惠券</span>
+        <span class="icon-badge" id="couponBadge" hidden></span>
+      </button>
+      <button class="icon-btn" id="btnCampaigns" title="活动">
+        <span class="icon-emoji">🎉</span>
+        <span class="icon-label">活动</span>
+        <span class="icon-badge" id="campaignBadge" hidden></span>
+      </button>
+      <div class="status">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusText">正在检测…</span>
+      </div>
     </div>
   </div>
 </header>
 
-<main class="layout-deal">
+<main>
 
-  <!-- 输入 -->
-  <section class="askcard">
-    <label class="ask-label" for="want">你想吃哪个？</label>
-    <input id="want" class="ask-input" type="text" placeholder="板烧鸡腿堡" value="板烧鸡腿堡" />
-    <div class="field-row ask-row">
-      <div>
-        <span class="field-label">城市</span>
-        <input id="city" type="text" placeholder="杭州" value="杭州" />
-      </div>
-      <div>
-        <span class="field-label">位置关键词</span>
-        <input id="keyword" type="text" placeholder="文三路" value="文三路" />
-      </div>
+  <!-- 唯一主入口 -->
+  <section class="askhero">
+    <h2 class="hero-title">我想吃<span class="hero-dots">…</span></h2>
+
+    <div class="hero-row">
+      <input id="want" type="text" placeholder="输入想吃的东西，比如「板烧鸡腿堡」" />
+      <button id="runBtn" class="btn-go">算一下</button>
     </div>
-    <button id="runBtn" class="btn-primary">算一下怎么买划算</button>
-    <p class="ask-hint">价格全部取自麦当劳官方算价接口，不估算、不凑数</p>
+
+    <div class="hero-cats">
+      <span class="hero-cats-label">或者直接挑一类：</span>
+      <span class="hero-cats-list" id="heroCatsList"><span class="loading-inline">加载分类…</span></span>
+    </div>
+
+    <div class="hero-loc">
+      <span class="field-label">城市</span>
+      <input id="city" type="text" value="杭州" class="loc-input" />
+      <span class="field-label">位置</span>
+      <input id="keyword" type="text" value="武林广场" class="loc-input" />
+      <span class="loc-store" id="locStore"></span>
+    </div>
   </section>
 
-  <!-- 结果 -->
+  <!-- 点分类后出现的商品网格 -->
+  <section id="catResult" hidden></section>
+
+  <!-- 算价结果 -->
   <section class="results">
     <div id="warnings" class="warnings" hidden></div>
-
     <div id="empty" class="empty">
       <div class="empty-icon">🍔</div>
-      <h3>输入你想吃的东西</h3>
+      <h3>输入你想吃的东西，或点上面任意一类</h3>
       <p>系统会扫描门店全部套餐，找出包含它的那些，用官方价格逐条对比，告诉你多花多少钱、多得什么、划不划算。</p>
     </div>
-
     <div id="deal"></div>
   </section>
 
@@ -61,8 +87,20 @@
 
 <footer class="footer">
   <span>mcd-order-lab · 1024程序员节 麦当劳程序员创意开发大赛参赛作品</span>
-  <span class="footer-dim">餐品信息、价格及供应状态以麦当劳官方渠道实时结果为准</span>
+  <span class="footer-dim">餐品图片与数据来自麦当劳官方渠道，价格及供应状态以官方实时结果为准</span>
 </footer>
+
+<!-- 券 / 活动抽屉 -->
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-mask" id="sheetMask"></div>
+  <div class="sheet-panel">
+    <div class="sheet-head">
+      <span id="sheetTitle">标题</span>
+      <button id="sheetClose" class="sheet-close" aria-label="关闭">×</button>
+    </div>
+    <div id="sheetBody" class="sheet-body"></div>
+  </div>
+</div>
 
 <script src="./app.js"></script>
 </body>

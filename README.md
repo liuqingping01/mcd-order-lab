@@ -6,6 +6,33 @@
 
 ---
 
+## 界面实拍
+
+**输入想吃的东西，直接给结论：买套餐还是单点、净赚多少**
+
+![比价结果](docs/screenshots/02-desktop-deal.png)
+
+**购物车攒几样，自动找出能覆盖它们的套餐，官方算价逐条对比**
+
+![购物车相似方案对比](docs/screenshots/04-desktop-cart.png)
+
+**首页：唯一入口「我想吃…」，可直接输入或点大分类**
+
+![首页](docs/screenshots/01-desktop-home.png)
+
+**可领券与活动（附属信息，不干扰主线；官方算价不含券，页面有明确说明）**
+
+![优惠券](docs/screenshots/03-desktop-coupons.png)
+
+**手机端同样可用（触控目标 44px 级热区、底部弹出抽屉、输入框防 iOS 缩放）**
+
+<p>
+  <img src="docs/screenshots/05-mobile-home.png" width="270" alt="手机端首页" />
+  <img src="docs/screenshots/06-mobile-deal.png" width="270" alt="手机端比价结果" />
+</p>
+
+---
+
 ## 解决什么问题
 
 麦当劳 App 里单品、套餐、优惠券、活动铺满一屏，真正难的不是"选什么"，而是：

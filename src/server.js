@@ -124,6 +124,67 @@ async function mapLimit(list, limit, fn) {
   return out;
 }
 
+/* ------------------------------------------------------------------ */
+/* 门店选取                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 从门店列表里挑一家「当前营业中」的。
+ *
+ * ⚠️ 实测依据（2026-10-15 21:41，杭州西湖）：`query-nearby-stores` 返回的门店带
+ * `businessStatus`，景区店 07:00–19:00；打烊后 `query-meals` 对这类门店直接返回
+ * `success=false` +「门店可能已关闭或不在营业时间」。若只取列表第一家（可能已打烊），
+ * 整条链路会表现得像「服务坏了」，实际只是非营业时间。
+ */
+function pickOpenStore(stores, fixedStoreCode) {
+  if (fixedStoreCode) {
+    const fixed = stores.find((s) => s.code === String(fixedStoreCode));
+    // 指定门店即使打烊也尊重用户选择，由下游统一报错
+    if (fixed) return fixed;
+  }
+  return stores.find((s) => s.open !== false) ?? null;
+}
+
+/** 一家营业门店都找不到时的说明文案 */
+function noOpenStoreError(stores, city, keyword) {
+  if (!stores.length) {
+    return `未查询到「${city ?? ''} ${keyword ?? ''}」附近的门店，换个城市或位置关键词试试`;
+  }
+  const s = stores[0];
+  return (
+    `周边 ${stores.length} 家门店当前都已打烊（最近的「${s.name}」营业时间 ${s.hours || '未知'}）。` +
+    '麦当劳 MCP 在非营业时间不返回菜单，请换个位置关键词或明天再试。'
+  );
+}
+
+/**
+ * 统一解析「用哪家店」：优先营业中门店；若当前关键词下全部打烊，
+ * 自动放宽到城市级再查一次（城市范围更大，通常能覆盖 24 小时门店）。
+ */
+async function resolveStore(client, { city, keyword, storeCode: fixedStoreCode }, warnings) {
+  const query = async (kw) => {
+    const res = await step('query-nearby-stores', () =>
+      client.callToolJson('query-nearby-stores', { beType: 1, city: city ?? '', keyword: kw ?? '', searchType: 2 })
+    );
+    if (!res.ok) warnings.push(`门店查询失败：${res.error}`);
+    return res.ok ? normalizeStores(res.data?.data) : [];
+  };
+
+  let stores = await query(keyword);
+  let store = pickOpenStore(stores, fixedStoreCode);
+
+  if (!store && !fixedStoreCode && city && keyword && String(keyword) !== String(city)) {
+    const wider = await query(city);
+    const fallback = pickOpenStore(wider, null);
+    if (fallback) {
+      stores = wider;
+      store = fallback;
+      warnings.push(`「${keyword}」附近门店已打烊，已改用「${city}」范围内仍在营业的门店：${store.name}`);
+    }
+  }
+  return { store, stores };
+}
+
 /**
  * 点单链路（到店自取 beType=1）。
  *
@@ -145,30 +206,14 @@ async function buildPlan(client, body) {
   const nowInfo = timeRes.ok ? timeRes.data?.data ?? timeRes.data : null;
   if (!timeRes.ok) warnings.push(`时间查询失败：${timeRes.error}`);
 
-  // 2) 门店
-  let store = null;
-  if (fixedStoreCode) {
-    const res = await step('query-nearby-stores', () =>
-      client.callToolJson('query-nearby-stores', {
-        beType: 1, city: city ?? '', keyword: keyword ?? '', searchType: 2,
-      })
-    );
-    const all = res.ok ? normalizeStores(res.data?.data) : [];
-    store = all.find((s) => s.code === String(fixedStoreCode)) ?? null;
-  } else {
-    if (!city || !keyword) {
-      warnings.push('缺少城市或位置关键词，无法查询门店');
-    }
-    const res = await step('query-nearby-stores', () =>
-      client.callToolJson('query-nearby-stores', {
-        beType: 1, city, keyword, searchType: 2,
-      })
-    );
-    const all = res.ok ? normalizeStores(res.data?.data) : [];
-    if (!res.ok) warnings.push(`门店查询失败：${res.error}`);
-    store = all[0] ?? null;
-    if (!store && res.ok) warnings.push(`未查询到「${city} ${keyword}」附近的门店，请换一个关键词`);
+  // 2) 门店（优先取营业中的，打烊门店拿不到菜单，详见 pickOpenStore）
+  if (!fixedStoreCode && (!city || !keyword)) {
+    warnings.push('缺少城市或位置关键词，无法查询门店');
   }
+  const { store, stores: storeList } = await resolveStore(
+    client, { city, keyword, storeCode: fixedStoreCode }, warnings
+  );
+  if (!store) warnings.push(noOpenStoreError(storeList, city, keyword));
 
   const storeCode = store?.code ?? '';
 
@@ -274,17 +319,11 @@ async function buildDeal(client, body) {
   const { city, keyword, want, storeCode: fixedStoreCode } = body ?? {};
   if (!want) return { ok: false, error: '缺少 want（你想吃什么）' };
 
-  // 1) 门店
-  let store = null;
-  const storeRes = await step('query-nearby-stores', () =>
-    client.callToolJson('query-nearby-stores', { beType: 1, city, keyword, searchType: 2 })
+  // 1) 门店（优先取营业中的，打烊门店拿不到菜单）
+  const { store, stores } = await resolveStore(
+    client, { city, keyword, storeCode: fixedStoreCode }, warnings
   );
-  const stores = storeRes.ok ? normalizeStores(storeRes.data?.data) : [];
-  if (!storeRes.ok) warnings.push(`门店查询失败：${storeRes.error}`);
-  store = fixedStoreCode
-    ? stores.find((s) => s.code === String(fixedStoreCode)) ?? stores[0] ?? null
-    : stores[0] ?? null;
-  if (!store) return { ok: false, error: '未查询到门店', warnings };
+  if (!store) return { ok: false, error: noOpenStoreError(stores, city, keyword), warnings };
   const storeCode = store.code;
 
   // 2) 菜单
@@ -426,15 +465,10 @@ async function buildExplore(client, body) {
   const warnings = [];
   const { city, keyword, mode = 'groups', category } = body ?? {};
 
-  const storeRes = await step('query-nearby-stores', () =>
-    client.callToolJson('query-nearby-stores', { beType: 1, city, keyword, searchType: 2 })
-  );
   // ⚠️ 层级：step() 把结果包成 {ok, data} 后，data 才是 callToolJson 返回的信封，
-  //    再往下一层 .data 才是业务 payload。
-  const stores = storeRes.ok ? normalizeStores(storeRes.data?.data) : [];
-  if (!storeRes.ok) warnings.push(`门店查询失败：${storeRes.error}`);
-  const store = stores[0] ?? null;
-  if (!store) return { ok: false, error: '未查询到门店', warnings };
+  //    再往下一层 .data 才是业务 payload（见 adapter.normalizeStores）。
+  const { store, stores } = await resolveStore(client, { city, keyword }, warnings);
+  if (!store) return { ok: false, error: noOpenStoreError(stores, city, keyword), warnings };
   const storeCode = store.code;
 
   const mealsRes = await step('query-meals', () =>
@@ -568,14 +602,9 @@ async function buildCart(client, body) {
 
   if (!cart.length) return { ok: false, error: '购物车是空的' };
 
-  // 1) 门店
-  const storeRes = await step('query-nearby-stores', () =>
-    client.callToolJson('query-nearby-stores', { beType: 1, city, keyword, searchType: 2 })
-  );
-  const stores = storeRes.ok ? normalizeStores(storeRes.data?.data) : [];
-  if (!storeRes.ok) warnings.push(`门店查询失败：${storeRes.error}`);
-  const store = stores[0] ?? null;
-  if (!store) return { ok: false, error: '未查询到门店', warnings };
+  // 1) 门店（优先取营业中的，打烊门店拿不到菜单）
+  const { store, stores } = await resolveStore(client, { city, keyword }, warnings);
+  if (!store) return { ok: false, error: noOpenStoreError(stores, city, keyword), warnings };
   const storeCode = store.code;
 
   // 2) 菜单（用来补全名称、图片、以及判定套餐）

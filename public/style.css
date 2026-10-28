@@ -71,6 +71,39 @@ body {
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #c4c8cf; }
 .dot.ok { background: var(--ok); }
 .dot.bad { background: var(--accent); }
+.dot.demo { background: #f0a020; }
+
+/* 演示模式横幅：必须让来访者一眼看出数据不是实时的 */
+.demo-banner {
+  max-width: 1180px;
+  margin: 12px auto 0;
+  padding: 10px 14px;
+  border: 1px solid #f5d9a8;
+  background: #fff8ea;
+  border-radius: 10px;
+  color: #7a4d05;
+  font-size: 12.5px;
+  line-height: 1.7;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.demo-banner strong {
+  flex: none;
+  background: #f0a020;
+  color: #fff;
+  border-radius: 6px;
+  padding: 1px 8px;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.demo-banner span { flex: 1 1 320px; min-width: 0; }
+.btn-order:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+  filter: grayscale(.4);
+}
 
 /* ---------- 主容器 ---------- */
 main {

@@ -20,6 +20,7 @@ const els = {
   statusDot: $('statusDot'), statusText: $('statusText'),
   city: $('city'), keyword: $('keyword'), locStore: $('locStore'),
   want: $('want'), runBtn: $('runBtn'), heroCatsList: $('heroCatsList'),
+  demoBannerHost: $('demoBannerHost'),
   catResult: $('catResult'),
   warnings: $('warnings'), empty: $('empty'), deal: $('deal'),
   btnCoupons: $('btnCoupons'), btnCampaigns: $('btnCampaigns'), btnCart: $('btnCart'),
@@ -134,9 +135,21 @@ function setStore(name) { els.locStore.textContent = name ? `当前门店：${na
 const loc = () => ({ city: els.city.value.trim(), keyword: els.keyword.value.trim() });
 
 /* ---------- MCP 状态 ---------- */
+/**
+ * 两种运行模式：
+ *   live    —— 服务端有 Token，直连麦当劳官方 MCP
+ *   offline —— 服务端无 Token，用预生成的真实数据快照（公网演示站点的形态）
+ * 演示模式必须在页面上说清楚数据不是实时的，并且明确不支持真实下单。
+ */
 async function checkHealth() {
   try {
     const j = await (await fetch('/api/health')).json();
+    if (j.mode === 'offline') {
+      els.statusDot.className = 'dot demo';
+      els.statusText.textContent = '演示模式';
+      showDemoBanner(j.demo);
+      return;
+    }
     if (j.tokenConfigured) {
       els.statusDot.className = 'dot ok';
       els.statusText.textContent = 'MCP 已连接';
@@ -148,6 +161,29 @@ async function checkHealth() {
     els.statusDot.className = 'dot bad';
     els.statusText.textContent = '服务未响应';
   }
+}
+
+/** 演示模式横幅：说明数据快照时间与门店，并声明不支持真实下单 */
+function showDemoBanner(demo) {
+  if (els.demoBanner) return;
+  const when = demo?.generatedAt ? demo.generatedAt.slice(0, 10) : '未知';
+  const store = demo?.store?.name ?? '快照门店';
+  const bar = el('div', 'demo-banner');
+  bar.id = 'demoBanner';
+  bar.append(el('strong', null, '演示模式'));
+  bar.append(
+    el(
+      'span',
+      null,
+      `本页展示的是 ${when} 抓取的真实数据快照（门店：${store}），价格与供应状态可能已变动；` +
+        '演示模式不连接麦当劳官方接口、不支持真实下单。价格口径与主线玩法与实时版完全一致。'
+    )
+  );
+  els.demoBannerHost.appendChild(bar);
+  els.demoBanner = bar;
+
+  // 购物车组合价在离线时是各项求和而非官方整单算价，单独提示一次
+  els.demoCartNote = true;
 }
 
 /* ---------- 主入口下方的大分类 ---------- */
@@ -279,6 +315,17 @@ function renderCartOptions(r) {
 
   box.append(el('div', 'cart-cmp-title', '相似方案对比'));
 
+  // 演示模式下，购物车这类任意组合没有官方整单算价快照，价格是各项实价之和
+  if (els.demoCartNote) {
+    box.append(
+      el(
+        'p',
+        'ask-hint',
+        '演示模式：这里的组合价按各项实价求和得出，不代表麦当劳整单结算结果（不含满减等整单优惠）。'
+      )
+    );
+  }
+
   const row = el('div', 'cart-opt-row');
 
   // 基线：原样全买单品
@@ -352,7 +399,13 @@ function renderCartOptions(r) {
   box.append(pay);
 
   const btn = el('button', 'btn-primary btn-order', '下单');
+  if (els.demoCartNote) {
+    btn.disabled = true;
+    btn.title = '演示模式不支持真实下单';
+    box.append(el('p', 'ask-hint', '演示模式下单已停用（不连接麦当劳官方接口）。'));
+  }
   btn.addEventListener('click', () => {
+    if (btn.disabled) return;
     const ok = window.confirm(
       `确认下单？\n\n门店：${r.store?.name ?? ''}\n方案：${picked.name}\n金额：${yuan(picked.price)}\n\n（演示环境：默认不发起真实下单）`
     );
@@ -687,8 +740,17 @@ function buildCheckout(r, options) {
     box.append(opt);
   }
 
+  // 演示模式没有真实下单能力，按钮保持可见但禁用并说明，避免评审误以为功能缺失是 bug
   const btn = el('button', 'btn-primary btn-order', '下单');
+  if (els.demoCartNote) {
+    btn.disabled = true;
+    btn.title = '演示模式不支持真实下单';
+    box.append(
+      el('p', 'ask-hint', '演示模式下单已停用（不连接麦当劳官方接口）。本机填入 Token 后可恢复真实下单。')
+    );
+  }
   btn.addEventListener('click', () => {
+    if (btn.disabled) return;
     const o = options.find((x) => x.key === state.selected);
     const lines = [
       `门店：${r.store?.name ?? ''}`,

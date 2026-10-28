@@ -17,6 +17,7 @@ import { dirname } from 'node:path';
 
 import { loadEnv, projectRoot } from './env.js';
 import { McdMcpClient } from './mcp-client.js';
+import { OfflineMcpClient, hasDataset } from './offline-client.js';
 import {
   normalizeStores, normalizeMenu, normalizeNutrition, normalizeCoupon,
   parseNutritionTable, extractPrice, asArray,
@@ -40,6 +41,55 @@ const PORT = Number(process.env.PORT ?? 5173);
  */
 const HOST = process.env.HOST ?? '127.0.0.1';
 const LAN_MODE = HOST === '0.0.0.0';
+
+/**
+ * 运行模式二选一：
+ *   live    —— 配了 MCD_MCP_TOKEN，直连麦当劳官方 MCP（本机使用）
+ *   offline —— 没有 Token 或显式 FORCE_DEMO=1，改用 demo/dataset.json 的真实快照
+ *
+ * ⚠️ 为什么需要 FORCE_DEMO 这个强制开关：
+ *   部分托管环境重新部署时会复用上一次的运行沙箱，**旧版本的 .env 文件可能残留**。
+ *   只靠「本次不上传 .env」并不能保证云端没有 Token——实测就出现过明明没传
+ *   Token、云端环境里却仍读到旧 Token 的情况。FORCE_DEMO=1 让服务端在运行时
+ *   明确拒绝使用任何 Token，从行为上彻底切断，不受残留文件影响。
+ */
+const OFFLINE_MODE = !process.env.MCD_MCP_TOKEN || process.env.FORCE_DEMO === '1';
+
+function makeClient() {
+  if (OFFLINE_MODE) return new OfflineMcpClient();
+  return new McdMcpClient({ token: process.env.MCD_MCP_TOKEN });
+}
+
+let offlineMeta = null;
+/**
+ * 演示模式的价格说明必须说清楚：
+ * 主线比价命中真实快照（来源 official），但购物车的任意组合无法在离线时穷举，
+ * 这类组合由各项实价求和得出 —— 不是官方整单算价，要明确写出来。
+ */
+function applyDemoNote(client, data) {
+  if (!data || data.ok === false) return data;
+  if (!OFFLINE_MODE || !client?.usedSynthetic) return data;
+  const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+  return {
+    ...data,
+    warnings: [
+      ...warnings,
+      '演示模式：本组合未命中官方整单算价快照，价格按各项实价求和得出（不含满减等整单优惠）。',
+    ],
+  };
+}
+
+function getOfflineMeta() {
+  if (offlineMeta) return offlineMeta;
+  try {
+    const c = new OfflineMcpClient();
+    const store = normalizeStores(c.dataset.static?.['query-nearby-stores']?.data)[0] ?? null;
+    offlineMeta = { generatedAt: c.dataset.generatedAt, store: store ? { name: store.name, hours: store.hours } : null };
+  } catch (err) {
+    offlineMeta = { generatedAt: null, store: null, error: err.message };
+  }
+  return offlineMeta;
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -704,14 +754,18 @@ const server = createServer(async (req, res) => {
   if (pathname === '/api/health') {
     return json(res, 200, {
       ok: true,
-      tokenConfigured: Boolean(process.env.MCD_MCP_TOKEN),
+      mode: OFFLINE_MODE ? 'offline' : 'live',
+      // 离线模式下不暴露环境里是否残留 Token（避免把凭据情况泄露给外部访问者），
+      // 只说明运行时实际使用的模式
+      tokenConfigured: !OFFLINE_MODE,
       node: process.version,
+      demo: OFFLINE_MODE ? { datasetReady: hasDataset(), ...getOfflineMeta() } : null,
     });
   }
 
   if (pathname === '/api/tools') {
     try {
-      const client = new McdMcpClient({ token: process.env.MCD_MCP_TOKEN });
+      const client = makeClient();
       await client.initialize();
       const tools = await client.listTools();
       return json(res, 200, { ok: true, count: tools.length, tools });
@@ -727,14 +781,15 @@ const server = createServer(async (req, res) => {
     } catch (err) {
       return json(res, 400, { ok: false, error: err.message });
     }
-    if (!process.env.MCD_MCP_TOKEN) {
-      return json(res, 400, {
+    if (OFFLINE_MODE && !hasDataset()) {
+      return json(res, 503, {
         ok: false,
-        error: '未配置 MCD_MCP_TOKEN。请复制 .env.example 为 .env 并填入从 https://open.mcd.cn/mcp 申请的 Token。',
+        error: '未配置 MCD_MCP_TOKEN，且找不到离线演示数据集 demo/dataset.json。' +
+               '请二选一：复制 .env.example 为 .env 填入 Token，或执行 node scripts/build-demo-dataset.js 生成演示数据。',
       });
     }
     try {
-      const client = new McdMcpClient({ token: process.env.MCD_MCP_TOKEN });
+      const client = makeClient();
       await client.initialize();
       const result = await buildPlan(client, body);
       return json(res, 200, { ok: true, ...result });
@@ -751,13 +806,14 @@ const server = createServer(async (req, res) => {
     } catch (err) {
       return json(res, 400, { ok: false, error: err.message });
     }
-    if (!process.env.MCD_MCP_TOKEN) {
-      return json(res, 400, { ok: false, error: '未配置 MCD_MCP_TOKEN' });
+    if (OFFLINE_MODE && !hasDataset()) {
+      return json(res, 503, { ok: false, error: '缺少 Token 与离线演示数据集，无法运行' });
     }
     try {
-      const client = new McdMcpClient({ token: process.env.MCD_MCP_TOKEN });
+      const client = makeClient();
       await client.initialize();
-      return json(res, 200, await buildDeal(client, body));
+      const result = await buildDeal(client, body);
+      return json(res, 200, applyDemoNote(client, result));
     } catch (err) {
       return json(res, 502, { ok: false, error: err.message });
     }
@@ -771,11 +827,11 @@ const server = createServer(async (req, res) => {
     } catch (err) {
       return json(res, 400, { ok: false, error: err.message });
     }
-    if (!process.env.MCD_MCP_TOKEN) {
-      return json(res, 400, { ok: false, error: '未配置 MCD_MCP_TOKEN' });
+    if (OFFLINE_MODE && !hasDataset()) {
+      return json(res, 503, { ok: false, error: '缺少 Token 与离线演示数据集，无法运行' });
     }
     try {
-      const client = new McdMcpClient({ token: process.env.MCD_MCP_TOKEN });
+      const client = makeClient();
       await client.initialize();
       return json(res, 200, await buildExplore(client, body));
     } catch (err) {
@@ -791,13 +847,14 @@ const server = createServer(async (req, res) => {
     } catch (err) {
       return json(res, 400, { ok: false, error: err.message });
     }
-    if (!process.env.MCD_MCP_TOKEN) {
-      return json(res, 400, { ok: false, error: '未配置 MCD_MCP_TOKEN' });
+    if (OFFLINE_MODE && !hasDataset()) {
+      return json(res, 503, { ok: false, error: '缺少 Token 与离线演示数据集，无法运行' });
     }
     try {
-      const client = new McdMcpClient({ token: process.env.MCD_MCP_TOKEN });
+      const client = makeClient();
       await client.initialize();
-      return json(res, 200, await buildCart(client, body));
+      const data = await buildCart(client, body);
+      return json(res, 200, applyDemoNote(client, data));
     } catch (err) {
       return json(res, 502, { ok: false, error: err.message });
     }
@@ -814,8 +871,14 @@ const server = createServer(async (req, res) => {
     if (body?.confirm !== true) {
       return json(res, 400, { ok: false, error: '下单需要显式传入 confirm: true 作为二次确认' });
     }
+    if (OFFLINE_MODE) {
+      return json(res, 400, {
+        ok: false,
+        error: '演示模式不支持真实下单（该模式不连接麦当劳官方接口）。请在本机配置 MCD_MCP_TOKEN 后使用。',
+      });
+    }
     try {
-      const client = new McdMcpClient({ token: process.env.MCD_MCP_TOKEN });
+      const client = makeClient();
       await client.initialize();
       const r = await client.callToolJson('create-order', body.order ?? {});
       return json(res, 200, { ok: true, order: r });
@@ -851,8 +914,16 @@ server.listen(PORT, HOST, () => {
     }
     console.log('⚠️  当前对局域网开放：同一网络下的其他人也能访问本服务，请勿在公共网络使用。');
   }
-  console.log(`MCP Token：${configured ? '已配置' : '未配置（请复制 .env.example 为 .env 并填入 Token）'}`);
-  if (!configured) {
-    console.log('未配置 Token 时 /api/plan 会返回错误提示，但页面仍可打开查看界面。');
+  if (OFFLINE_MODE) {
+    const meta = getOfflineMeta();
+    if (process.env.MCD_MCP_TOKEN) {
+      console.log('⚠️  检测到环境中存在 MCD_MCP_TOKEN，但 FORCE_DEMO=1 已强制本次运行不使用它。');
+    }
+    console.log('运行模式：离线演示（数据快照，不连接麦当劳官方接口）');
+    console.log(`  快照生成时间：${meta.generatedAt ?? '未知'}`);
+    if (meta.store) console.log(`  快照门店：${meta.store.name}${meta.store.hours ? '（营业 ' + meta.store.hours + '）' : ''}`);
+    console.log('  真实下单不可用；本机填入 Token 后会自动切回实时模式。');
+  } else {
+    console.log('运行模式：实时（已连接麦当劳官方 MCP）');
   }
 });
